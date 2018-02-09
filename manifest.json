@@ -1,0 +1,52 @@
+{
+
+	"manifest_version": 2,
+	"name": "Estate Site Sidebar",
+	"short_name": "estate-site-sidebar",
+	"version": "0.0.1",
+	"description": "",
+	"author": "",
+	"icons": {
+
+		"128": "/icons/icon_128.png"
+
+	},
+
+	"browser_action": {
+
+		"default_icon": "/icons/icon_128.png"
+
+	},
+
+	"content_scripts": [
+		{
+			"matches": [
+				"https://qpublic.schneidercorp.com/*"
+			],
+			"js": [
+				"/js/jquery.min.js",
+				"/inject.js"
+			],
+			"run_at": "document_start",
+			"all_frames": true
+		}
+	],
+
+	"permissions": [
+
+		"https://qpublic.schneidercorp.com/*",
+
+		"alarms",
+		"notifications",
+		"webRequest",
+		"webRequestBlocking",
+		"contextMenus"
+
+	],
+
+	"web_accessible_resources": [
+
+		"/*"
+
+	]
+}
