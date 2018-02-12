@@ -59,34 +59,44 @@ class InjectScript {
             let tempCache = this.cache;
             //Deleting Garbage
             if (!this.cache[itemId]) {
-              this.loadReport(item.id, $(item).find("a:contains(Report)")[0].href);
-              let removing = $('<span style="color:red;z-index:99;">[Remove]</span>');
-              removing.click(function() {
-                $(item).remove();
-                delete tempCache[itemId];
-                let str = $('script[type="text/javascript"]')[1].text;
-                let map = JSON.parse(str.slice(29,str.length-75));
-                $.ajax({type: 'post', url:
-                  'https://qpublic.schneidercorp.com/api/beaconCore/SetResults?QPS='+map['QPS'],
-                  data: JSON.stringify({keys: Object.keys(tempCache).map(
-                  function(key, index) {
-                    return tempCache[key].parcelId;
-                  }), layerId: map['LayerId'], ts: Date.now()
-                }), headers: {
-                  'content-type': 'application/json'
-                }
-              });
-            }); $(item).append(removing);
-          } //Other Display
-            sidebarItems.push(sidebarItemTemplate
-                .replace("{id}", item.id)
-                .replace("{photo}", this.cache[itemId].photo || chrome.extension.getURL("icons/no_image_placeholder.png"))
-                .replace("{propertyAddress}", this.cache[itemId].propertyAddress)
-                .replace("{parcelId}", this.cache[itemId].parcelId)
-                .replace("{totalSqFt}", this.cache[itemId].totalSqFt && this.cache[itemId].totalSqFt.toString() || "0")
-                .replace("{totalAcreage}", this.cache[itemId].totalAcreage && this.cache[itemId].totalAcreage.toString() || "0")
-                .replace("{mostRecentFairMarkets}", this.cache[itemId].mostRecentFairMarkets)
-                .replace("{marketPrice}", formatMoney(this.cache[itemId].marketPrice)));
+                this.loadReport(item.id, $(item).find("a:contains(Report)")[0].href);
+                let removing = $('<span style="color:red;z-index:99;">[Remove]</span>');
+                removing.click(function() {
+                    $(item).remove();
+                    delete tempCache[itemId];
+                    let str = $('script[type="text/javascript"]')[1].text;
+                    let map = JSON.parse(str.slice(29,str.length-75));
+                    $.ajax({
+                        type: 'post',
+                        url: 'https://qpublic.schneidercorp.com/api/beaconCore/SetResults?QPS='+map['QPS'],
+                        data: JSON.stringify({
+                            keys: Object.keys(tempCache).map(function(key, index) {
+                                return tempCache[key].parcelId;
+                            }),
+                            layerId: map['LayerId'],
+                            ts: Date.now()
+                        }),
+                        headers: {
+                            'content-type': 'application/json'
+                        }
+                    });
+                });
+                $(item).append(removing);
+            }
+            //Other Display
+            let itemData = {
+                id: item.id,
+                photo: this.cache[itemId].photo || chrome.extension.getURL("icons/no_image_placeholder.png"),
+                propertyAddress: this.cache[itemId].propertyAddress,
+                parcelId: this.cache[itemId].parcelId,
+                totalSqFt: this.cache[itemId].totalSqFt && this.cache[itemId].totalSqFt.toString() || "0",
+                totalAcreage: this.cache[itemId].totalAcreage && this.cache[itemId].totalAcreage.toString() || "0",
+                mostRecentFairMarkets: this.cache[itemId].mostRecentFairMarkets,
+                marketPrice: formatMoney(this.cache[itemId].marketPrice),
+                owner: this.cache[itemId].owner
+            };
+            // console.log( this.cache[itemId] );
+            sidebarItems.push(sidebarItemTemplate(itemData));
         }
         $("#ext-sidebar").replaceWith(sidebarTemplate
             .replace("{display}", (this.opened ? "block" : "none"))
@@ -106,12 +116,18 @@ class InjectScript {
                 let salesSection = response.find("#ctlBodyPane_ctl11_mSection");
                 let valuationSection = response.find("#ctlBodyPane_ctl13_ctl01_grdValuation");
                 let photoSection = response.find("#ctlBodyPane_ctl14_mSection");
+
                 // A
-                entry.parcelId = response.find("#ctlBodyPane_ctl00_ctl01_lblParcelID").text().trim();
+                // entry.parcelId = response.find("#ctlBodyPane_ctl00_ctl01_lblParcelID").text().trim();
+                entry.parcelId = response.find('td:contains("Parcel Number")').next().text().trim();
                 // B
-                entry.propertyAddress = response.find("#ctlBodyPane_ctl00_ctl01_lblLocationAddress").text().trim();
+                // entry.propertyAddress = response.find("#ctlBodyPane_ctl00_ctl01_lblLocationAddress").text().trim();
+                entry.propertyAddress = response.find('td:contains("Location Address")').next().text().trim();
                 // C
                 entry.owner = response.find("#ctlBodyPane_ctl01_ctl01_lnkOwnerName_lblSearch").text().trim();
+                if( entry.owner == '' ){
+                    entry.owner = response.find("#ctlBodyPane_ctl01_ctl01_lnkOwnerName_lnkSearch").text().trim();
+                }
                 // D
                 entry.ownerAddress = response.find("#ctlBodyPane_ctl01_ctl01_lblAddress").text().replace(/\r/g, ",");
                 // E
@@ -145,6 +161,8 @@ class InjectScript {
                 if (fairMarketsSales.length > 0) {
                     entry.mostRecentFairMarkets = lastFairMarketsSale.find("td").eq(0).text().trim();
                     entry.marketPrice = lastFairMarketsSale.find("td").eq(3).text().trim();
+                // } else {
+                //     entry.mostRecentFairMarkets = 'A while ago';
                 }
                 // L
                 if (lastSaleMoreThan0Dollar.length > 0) {
@@ -321,21 +339,24 @@ const sidebarTemplate = `
         {children}
     </div>
 `;
-const sidebarItemTemplate = `
-    <div id="{id}" class="ext-result" style="clear: both; padding-bottom: 10px;">
-        <div style="width: 50%; float: left; padding-right: 10px;">
-            <img src="{photo}"
-                 style="max-width: 100%;" />
+function sidebarItemTemplate( data ) {
+    return `
+        <div id="${data.id}" class="ext-result" style="clear: both; padding-bottom: 10px; overflow: hidden;">
+            <div style="width: 50%; float: left; padding-right: 10px;">
+                <img src="${data.photo}"
+                     style="max-width: 100%;" />
+            </div>
+            <div style="width: 50%; float: left;">
+                <b>${data.propertyAddress}</b><br/>
+                <b>${data.parcelId}</b><br/>
+                <b>${data.totalSqFt}</b>&nbsp;sq&nbsp;ft<br/>
+                <b>${data.totalAcreage} acres</b>&nbsp;lot<br/>
+                <b>${data.mostRecentFairMarkets}</b>&nbsp;Last&nbsp;Sale&nbsp;Date<br/>
+                <b>${data.marketPrice}</b>&nbsp;Last&nbsp;Sale&nbsp;Price<br />
+                <!--b>${data.owner}</b-->
+            </div>
         </div>
-        <div style="width: 50%; float: left;">
-            <b>{propertyAddress}</b><br/>
-            <b>{parcelId}</b><br/>
-            <b>{totalSqFt}</b>&nbsp;sq&nbsp;ft<br/>
-            <b>{totalAcreage} acres</b>&nbsp;lot<br/>
-            <b>{mostRecentFairMarkets}</b>&nbsp;Last&nbsp;Sale&nbsp;Date<br/>
-            <b>{marketPrice}</b>&nbsp;Last&nbsp;Sale&nbsp;Price
-        </div>
-    </div>
-`;
+    `;
+}
 let injectScript = new InjectScript();
 //# sourceMappingURL=inject.js.map
