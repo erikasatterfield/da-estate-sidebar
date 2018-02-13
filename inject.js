@@ -42,6 +42,7 @@ class InjectScript {
             }
         }
         setTimeout(() => { this.waitForResultsListChange(); }, 100);
+        // console.log( 'hey' );
     }
     createSidebar() {
         this.waitFor(".map-wrap")
@@ -84,19 +85,25 @@ class InjectScript {
                 $(item).append(removing);
             }
             //Other Display
-            let itemData = {
-                id: item.id,
-                photo: this.cache[itemId].photo || chrome.extension.getURL("icons/no_image_placeholder.png"),
-                propertyAddress: this.cache[itemId].propertyAddress,
-                parcelId: this.cache[itemId].parcelId,
-                totalSqFt: this.cache[itemId].totalSqFt && this.cache[itemId].totalSqFt.toString() || "0",
-                totalAcreage: this.cache[itemId].totalAcreage && this.cache[itemId].totalAcreage.toString() || "0",
-                mostRecentFairMarkets: this.cache[itemId].mostRecentFairMarkets,
-                marketPrice: formatMoney(this.cache[itemId].marketPrice),
-                owner: this.cache[itemId].owner
-            };
+            // let itemData = {
+            //     id: item.id,
+            //     photo: this.cache[itemId].photo || chrome.extension.getURL("icons/no_image_placeholder.png"),
+            //     propertyAddress: this.cache[itemId].propertyAddress,
+            //     parcelId: this.cache[itemId].parcelId,
+            //     totalSqFt: this.cache[itemId].totalSqFt && this.cache[itemId].totalSqFt.toString() || "0",
+            //     totalAcreage: this.cache[itemId].totalAcreage && this.cache[itemId].totalAcreage.toString() || "0",
+            //     mostRecentFairMarkets: this.cache[itemId].mostRecentFairMarkets,
+            //     marketPrice: formatMoney(this.cache[itemId].marketPrice),
+            //     owner: this.cache[itemId].owner,
+            //     detailsUrl: this.cache[itemId].detailsUrl
+            // };
+            let itemData2 = Object.assign({ id: item.id }, this.cache[itemId]);
+            if( ! itemData2.photo ) {
+                itemData2.photo = chrome.extension.getURL("icons/no_image_placeholder.png");
+            }
+            itemData2.marketPrice = formatMoney(itemData2.marketPrice);
             // console.log( this.cache[itemId] );
-            sidebarItems.push(sidebarItemTemplate(itemData));
+            sidebarItems.push(sidebarItemTemplate(itemData2));
         }
         $("#ext-sidebar").replaceWith(sidebarTemplate
             .replace("{display}", (this.opened ? "block" : "none"))
@@ -117,42 +124,67 @@ class InjectScript {
                 let valuationSection = response.find("#ctlBodyPane_ctl13_ctl01_grdValuation");
                 let photoSection = response.find("#ctlBodyPane_ctl14_mSection");
 
-                // A
-                // entry.parcelId = response.find("#ctlBodyPane_ctl00_ctl01_lblParcelID").text().trim();
-                entry.parcelId = response.find('td:contains("Parcel Number")').next().text().trim();
-                // B
-                // entry.propertyAddress = response.find("#ctlBodyPane_ctl00_ctl01_lblLocationAddress").text().trim();
-                entry.propertyAddress = response.find('td:contains("Location Address")').next().text().trim();
-                // C
-                entry.owner = response.find("#ctlBodyPane_ctl01_ctl01_lnkOwnerName_lblSearch").text().trim();
-                if( entry.owner == '' ){
-                    entry.owner = response.find("#ctlBodyPane_ctl01_ctl01_lnkOwnerName_lnkSearch").text().trim();
+                function getSection(selector, notSelector) {
+                    let unSelect = '';
+                    if (notSelector) {
+                        unSelect = ':not(:contains(' + notSelector + '))';
+                    }
+                    return response.find('.title:contains(' + selector + ')' + unSelect).closest('section');
                 }
-                // D
-                entry.ownerAddress = response.find("#ctlBodyPane_ctl01_ctl01_lblAddress").text().replace(/\r/g, ",");
-                // E
-                let floors = commImprSection.find(".tabular-data-two-column");
-                entry.multipleFloors = floors.length;
-                // F
-                entry.totalAcreage = parseFloat(response.find("#ctlBodyPane_ctl00_ctl01_lblAcres").text().trim());
-                // G
-                entry.totalSqFt = 0;
-                let sqFeetElems = commImprSection.find("td:contains(Square Feet)").parent().find("td:last>span");
-                sqFeetElems.toArray().forEach((elem) => {
-                    entry.totalSqFt += parseInt(elem.innerText);
-                });
-                // H
-                entry.zoningClass = response.find("#ctlBodyPane_ctl00_ctl01_lblZoning").text().trim();
-                // I
-                if (floors.length > 0) {
-                    entry.description = floors.find("td:contains(Description)").closest("tr").find("td:last>span")[0].innerText.trim();
-                }
-                // J
+
+                let dom = {
+                    summary: getSection('Summary'),
+                    owner: getSection('Owner'),
+                    land: getSection('Land'),
+                    improvement: getSection('Improvement Information'),
+                    sales: getSection('Sales','Area Sales Report'),
+                    valuation: getSection('Valuation'),
+                    photo: getSection('Photo')
+                };
+
+                entry = {
+                    // Summary
+                    parcelId: dom.summary.find('td:contains(Parcel Number)').next().text().trim(),
+                    propertyAddress: dom.summary.find('td:contains(Location Address)').next().text().trim(),
+                    zoningClass: dom.summary.find('td:contains(Zoning)').next().text().trim(),
+                    totalAcreage: parseFloat(dom.summary.find('td:contains(Acres)').next().text().trim()) || 0,
+                    // Owner
+                    owner: dom.owner.find("[id*=OwnerName]").text().trim(),
+                    ownerAddress: function(){
+                        let ownerAddressTextNodes = dom.owner.find('[id*=Address]').contents().filter(function() {
+                            return this.nodeType == Node.TEXT_NODE;
+                        });
+                        let ownerAddressTextArray = ownerAddressTextNodes.toArray().map( node => node.textContent );
+                        ownerAddressTextArray.push(dom.owner.find('[id*=City]').text().trim());
+                        return ownerAddressTextArray.length ? ownerAddressTextArray.join(', ') : 'Unknown';
+                    }(),
+                    // Improvement
+                    totalSqFt: function(){
+                        let totalSqFt = 0;
+                        let sqFeetElems = dom.improvement.find("td:contains(Square Feet)").next();
+                        sqFeetElems.toArray().forEach((elem) => {
+                            totalSqFt += parseInt(elem.innerText);
+                        });
+                        return totalSqFt;
+                    }(),
+                    multipleFloors: function(){
+                        let floors = dom.improvement.find(".tabular-data-two-column");
+                        return floors.length || 1;
+                    }(),
+                    // Land
+                    description: dom.land.find('td:contains(Description)').eq(0).next().text().trim() || 'N/A',
+                    salesReason: 'Just Because'
+
+
+
+                };
+
+                // Reason
                 let lastSaleMoreThan0Dollar = salesSection.find("tbody>tr:first:not(:contains($0))");
-                if (lastSaleMoreThan0Dollar.length > 0) {
-                    entry.salesReason = lastSaleMoreThan0Dollar.find("td").eq(4).text().trim();
-                }
-                // K
+                // if (lastSaleMoreThan0Dollar.length > 0) {
+                //     entry.salesReason = lastSaleMoreThan0Dollar.find("td").eq(4).text().trim();
+                // }
+                // Fair Market Sale / Market Price
                 let fairMarketsSales = salesSection.find("tbody>tr:contains(Fair Market)");
                 let lastFairMarketsSale = null;
                 if (fairMarketsSales.length > 0) {
@@ -164,21 +196,21 @@ class InjectScript {
                 // } else {
                 //     entry.mostRecentFairMarkets = 'A while ago';
                 }
-                // L
+                // Market Price continued
                 if (lastSaleMoreThan0Dollar.length > 0) {
                     entry.marketPrice = parseMoney(lastSaleMoreThan0Dollar.find("td").eq(3).text().trim());
                 }
-                // M
+                // Cost Per Acre
                 entry.costPerAcre = (entry.marketPrice / entry.totalAcreage).toFixed(2);
-                // N
+                // Cost Per Sqft
                 entry.costPerSqFt = (entry.marketPrice / entry.totalSqFt).toFixed(2);
-                // O
+                // Most Recent Tax Accessors Total Value
                 entry.mostRecentTaxAccessorsValue = valuationSection.find("tr:contains(Current Value)>td.value-column").eq(0).text().trim();
-                // P
+                // Most Recent Tax Accessors Land Value
                 entry.pullOutLand = valuationSection.find("tr:contains(Land Value)>td.value-column").eq(0).text().trim();
-                // Q
+                // Value of Improments Based on Last Sale
                 entry.improvement = valuationSection.find("tr:contains(Improvement Value)>td.value-column").eq(0).text().trim();
-                // R
+                // Accessory Value
                 entry.accessory = valuationSection.find("tr:contains(Accessory Value)>td.value-column").eq(0).text().trim();
                 // Other
                 let photos = photoSection.find("img");
@@ -187,6 +219,7 @@ class InjectScript {
                 }
                 entry.detailsUrl = url;
                 this.cache[id] = entry;
+                console.log( entry );
                 this.updateSidebar();
             },
             error: (err) => {
@@ -233,13 +266,11 @@ class InjectScript {
             }
         });
     }
-    ;
     wait(time) {
         return new Promise((resolve) => {
             setTimeout(resolve, time);
         });
     }
-    ;
 }
 class Entry {
     toCSVRow() {
@@ -353,7 +384,51 @@ function sidebarItemTemplate( data ) {
                 <b>${data.totalAcreage} acres</b>&nbsp;lot<br/>
                 <b>${data.mostRecentFairMarkets}</b>&nbsp;Last&nbsp;Sale&nbsp;Date<br/>
                 <b>${data.marketPrice}</b>&nbsp;Last&nbsp;Sale&nbsp;Price<br />
-                <!--b>${data.owner}</b-->
+                <b>${data.owner}</b>
+                <a href="${data.detailsUrl}" target="_blank">Details</a><br />
+                <br /><br /><br />
+<strong>Cost Per Acre: </strong>${data.costPerAcre}<br />
+
+<strong>Cost Per sqft: </strong>${data.costPerSqFt}<br />
+
+<strong>Details link: </strong>${data.detailsUrl}<br />
+
+<strong>Improvement Value: </strong>${data.improvement}<br />
+
+<strong>Market Price: </strong>${data.marketPrice}<br />
+
+<strong>Most Recent Fair Market: </strong>${data.mostRecentFairMarkets}<br/>
+
+<strong>Tax Accessors Value: </strong>${data.mostRecentTaxAccessorsValue}<br />
+
+<strong>Floors?: </strong>${data.multipleFloors}<br />
+
+<strong>Owner: </strong>${data.owner}<br />
+
+<strong>Owner Address: </strong>${data.ownerAddress}<br />
+
+<strong>Parcel ID: </strong>${data.parcelId}<br />
+
+<strong>Photo link: </strong>${data.photo}<br />
+
+<strong>Address: </strong>${data.propertyAddress}<br />
+
+<strong>Land Value: </strong>${data.pullOutLand}<br />
+
+<strong>Acreage: </strong>${data.totalAcreage}<br />
+
+<strong>Total Sqft: </strong>${data.totalSqFt}<br />
+
+<strong>Zoning Class: </strong>${data.zoningClass}<br />
+<strong>Sales Reason: </strong>${data.salesReason}<br />
+<hr />
+
+
+
+
+
+
+
             </div>
         </div>
     `;
