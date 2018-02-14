@@ -25,6 +25,29 @@ class InjectScript {
             this.saveCSV();
             return false;
         });
+        $(document).on("click", '.remove_item', (e) => {
+            e.preventDefault();
+            let tempCache = this.cache;
+            let itemId = $(e.currentTarget).data('id');
+            delete tempCache[itemId];
+            $(`#${itemId}`).remove();
+            let str = $('script[type="text/javascript"]')[1].text;
+            let map = JSON.parse(str.slice(29,str.length-75));
+            $.ajax({
+                type: 'post',
+                url: 'https://qpublic.schneidercorp.com/api/beaconCore/SetResults?QPS='+map.QPS,
+                data: JSON.stringify({
+                    keys: Object.keys(tempCache).map(function(key, index) {
+                        return tempCache[key].parcelId;
+                    }),
+                    layerId: map.LayerId,
+                    ts: Date.now()
+                }),
+                headers: {
+                    'content-type': 'application/json'
+                }
+            });
+        });
     }
     waitForResultsListChange() {
         let panel = $("#ResultsPaneDiv");
@@ -42,7 +65,6 @@ class InjectScript {
             }
         }
         setTimeout(() => { this.waitForResultsListChange(); }, 100);
-        // console.log( 'hey' );
     }
     createSidebar() {
         this.waitFor(".map-wrap")
@@ -57,53 +79,16 @@ class InjectScript {
         let sidebarItems = [];
         for (let item of items) {
             let itemId = item.id;
-            let tempCache = this.cache;
-            //Deleting Garbage
             if (!this.cache[itemId]) {
                 this.loadReport(item.id, $(item).find("a:contains(Report)")[0].href);
-                let removing = $('<span style="color:red;z-index:99;">[Remove]</span>');
-                removing.click(function() {
-                    $(item).remove();
-                    delete tempCache[itemId];
-                    let str = $('script[type="text/javascript"]')[1].text;
-                    let map = JSON.parse(str.slice(29,str.length-75));
-                    $.ajax({
-                        type: 'post',
-                        url: 'https://qpublic.schneidercorp.com/api/beaconCore/SetResults?QPS='+map['QPS'],
-                        data: JSON.stringify({
-                            keys: Object.keys(tempCache).map(function(key, index) {
-                                return tempCache[key].parcelId;
-                            }),
-                            layerId: map['LayerId'],
-                            ts: Date.now()
-                        }),
-                        headers: {
-                            'content-type': 'application/json'
-                        }
-                    });
-                });
-                $(item).append(removing);
+                let remover = `<a href="#" class="remove_item" data-id="${itemId}" style="color: red;">[Remove]</a>`;
+                $(item).append(remover);
             }
-            //Other Display
-            // let itemData = {
-            //     id: item.id,
-            //     photo: this.cache[itemId].photo || chrome.extension.getURL("icons/no_image_placeholder.png"),
-            //     propertyAddress: this.cache[itemId].propertyAddress,
-            //     parcelId: this.cache[itemId].parcelId,
-            //     totalSqFt: this.cache[itemId].totalSqFt && this.cache[itemId].totalSqFt.toString() || "0",
-            //     totalAcreage: this.cache[itemId].totalAcreage && this.cache[itemId].totalAcreage.toString() || "0",
-            //     mostRecentFairMarkets: this.cache[itemId].mostRecentFairMarkets,
-            //     marketPrice: formatMoney(this.cache[itemId].marketPrice),
-            //     owner: this.cache[itemId].owner,
-            //     detailsUrl: this.cache[itemId].detailsUrl
-            // };
-            let itemData2 = Object.assign({ id: item.id }, this.cache[itemId]);
-            if( ! itemData2.photo ) {
-                itemData2.photo = chrome.extension.getURL("icons/no_image_placeholder.png");
+            let itemData = Object.assign({ id: item.id }, this.cache[itemId]);
+            if( ! itemData.photo ) {
+                itemData.photo = chrome.extension.getURL("icons/no_image_placeholder.png");
             }
-            itemData2.marketPrice = formatMoney(itemData2.marketPrice);
-            // console.log( this.cache[itemId] );
-            sidebarItems.push(sidebarItemTemplate(itemData2));
+            sidebarItems.push(sidebarItemTemplate(itemData));
         }
         $("#ext-sidebar").replaceWith(sidebarTemplate
             .replace("{display}", (this.opened ? "block" : "none"))
@@ -116,13 +101,8 @@ class InjectScript {
             url: url,
             type: "GET",
             success: (response) => {
-                response = $(response);
+                response = $(response).find( '.page-container');
                 let entry = new Entry();
-                let summarySection = response.find("#ctlBodyPane_ctl00_mSection");
-                let commImprSection = response.find("#ctlBodyPane_ctl06_mSection");
-                let salesSection = response.find("#ctlBodyPane_ctl11_mSection");
-                let valuationSection = response.find("#ctlBodyPane_ctl13_ctl01_grdValuation");
-                let photoSection = response.find("#ctlBodyPane_ctl14_mSection");
 
                 function getSection(selector, notSelector) {
                     let unSelect = '';
@@ -140,6 +120,23 @@ class InjectScript {
                     sales: getSection('Sales','Area Sales Report'),
                     valuation: getSection('Valuation'),
                     photo: getSection('Photo')
+                };
+
+                let getLastSaleRow = function(){
+                    let nonZeroSales = dom.sales.find("tbody>tr:not(:contains($0))");
+                    for(var row of nonZeroSales) {
+                        let saleRow = $(row).find( 'td:eq(4)').text().trim();
+                        switch (saleRow.toLowerCase()) {
+                            case "quit claim deed":
+                            // case "mulitple parcels":
+                                saleRow = false;
+                                break;
+                            default:
+                                saleRow = row;
+                        }
+                        return $( saleRow );
+                    }
+                    return false;
                 };
 
                 entry = {
@@ -173,53 +170,32 @@ class InjectScript {
                     }(),
                     // Land
                     description: dom.land.find('td:contains(Description)').eq(0).next().text().trim() || 'N/A',
-                    salesReason: 'Just Because'
-
-
-
+                    // Sales
+                    salesReason: getLastSaleRow() ? getLastSaleRow().find('td:eq(4)').text().trim() : 'None found',
+                    mostRecentFairMarkets: getLastSaleRow() ? getLastSaleRow().find('td:eq(0)').text().trim() : 'None found',
+                    marketPrice: getLastSaleRow() ? getLastSaleRow().find('td:eq(3)').text().trim() : 'None found',
+                    // Valuation
+                    mostRecentTaxAccessorsValue: dom.valuation.find("td:contains(Current Value)").next().text().trim(),
+                    pullOutLand: dom.valuation.find("td:contains(Land Value)").next().text().trim(),
+                    improvement: dom.valuation.find("td:contains(Improvement Value)").next().text().trim(),
+                    accessory: dom.valuation.find("td:contains(Accessory Value)").next().text().trim(),
+                    photo: dom.photo.length ? dom.photo.find('img:eq(0)')[0].src : null,
+                    // General
+                    detailsUrl: url
                 };
 
-                // Reason
-                let lastSaleMoreThan0Dollar = salesSection.find("tbody>tr:first:not(:contains($0))");
-                // if (lastSaleMoreThan0Dollar.length > 0) {
-                //     entry.salesReason = lastSaleMoreThan0Dollar.find("td").eq(4).text().trim();
-                // }
-                // Fair Market Sale / Market Price
-                let fairMarketsSales = salesSection.find("tbody>tr:contains(Fair Market)");
-                let lastFairMarketsSale = null;
-                if (fairMarketsSales.length > 0) {
-                    lastFairMarketsSale = $(fairMarketsSales[0]);
-                }
-                if (fairMarketsSales.length > 0) {
-                    entry.mostRecentFairMarkets = lastFairMarketsSale.find("td").eq(0).text().trim();
-                    entry.marketPrice = lastFairMarketsSale.find("td").eq(3).text().trim();
-                // } else {
-                //     entry.mostRecentFairMarkets = 'A while ago';
-                }
-                // Market Price continued
-                if (lastSaleMoreThan0Dollar.length > 0) {
-                    entry.marketPrice = parseMoney(lastSaleMoreThan0Dollar.find("td").eq(3).text().trim());
-                }
                 // Cost Per Acre
-                entry.costPerAcre = (entry.marketPrice / entry.totalAcreage).toFixed(2);
-                // Cost Per Sqft
-                entry.costPerSqFt = (entry.marketPrice / entry.totalSqFt).toFixed(2);
-                // Most Recent Tax Accessors Total Value
-                entry.mostRecentTaxAccessorsValue = valuationSection.find("tr:contains(Current Value)>td.value-column").eq(0).text().trim();
-                // Most Recent Tax Accessors Land Value
-                entry.pullOutLand = valuationSection.find("tr:contains(Land Value)>td.value-column").eq(0).text().trim();
-                // Value of Improments Based on Last Sale
-                entry.improvement = valuationSection.find("tr:contains(Improvement Value)>td.value-column").eq(0).text().trim();
-                // Accessory Value
-                entry.accessory = valuationSection.find("tr:contains(Accessory Value)>td.value-column").eq(0).text().trim();
-                // Other
-                let photos = photoSection.find("img");
-                if (photos.length > 0) {
-                    entry.photo = photos[0].src;
+                entry.costPerAcre = 'N/A';
+                if (entry.totalAcreage && entry.marketPrice !== 'None found'){
+                    entry.costPerAcre = formatMoney((parseMoney(entry.marketPrice) / entry.totalAcreage).toFixed(2));
                 }
-                entry.detailsUrl = url;
-                this.cache[id] = entry;
+                // Cost Per Sqft
+                entry.costPerSqFt = 'N/A';
+                if (entry.totalSqFt && entry.marketPrice !== 'None found') {
+                    entry.costPerSqFt =  formatMoney((parseMoney(entry.marketPrice) / entry.totalSqFt).toFixed(2));
+                }
                 console.log( entry );
+                this.cache[id] = entry;
                 this.updateSidebar();
             },
             error: (err) => {
@@ -297,7 +273,7 @@ class Entry {
     }
 }
 function formatMoney(val) {
-    return `${commafy(val)}`;
+    return `$${commafy(val)}`;
 }
 function parseMoney(val) {
     return parseInt(val
@@ -324,17 +300,17 @@ const labels = [
     "OWNER ADDRESS",
     "Multiple floors",
     "TOTAL ACREAGE",
-    "Total sq ft",
+    "Total Sq Ft",
     "Zoning Class",
     "DESCRIPTION",
     "Sales/Reason",
-    "Most recent: Fair Markets",
-    "Market price",
+    "Last Sale Date",
+    "Last Sale Price",
     "Cost per acre",
     "Cost per square foot",
     "MOST RECENT TAX ASSESSORS VALUE",
     "LAND ASSESSMENT VALUE",
-    "VALUE OF IMPROVEMENTS BASED ON MOST RECENT SALE",
+    "Tax Assessors Value of Improvements",
     "Accessory",
     "PHOTO"
 ];
@@ -384,51 +360,20 @@ function sidebarItemTemplate( data ) {
                 <b>${data.totalAcreage} acres</b>&nbsp;lot<br/>
                 <b>${data.mostRecentFairMarkets}</b>&nbsp;Last&nbsp;Sale&nbsp;Date<br/>
                 <b>${data.marketPrice}</b>&nbsp;Last&nbsp;Sale&nbsp;Price<br />
-                <b>${data.owner}</b>
+                <b>${data.owner}</b><br />
+                <strong>Cost Per Acre: </strong>${data.costPerAcre}<br />
+                <strong>Cost Per sqft: </strong>${data.costPerSqFt}<br />
+                <strong>Tax Accessors Value: </strong>${data.mostRecentTaxAccessorsValue}<br />
+                <strong>Land Value: </strong>${data.pullOutLand}<br />
+                <strong>Improvement Value: </strong>${data.improvement}<br />
+                <strong>Accessory: ${data.accessory}</strong><br />
+                <strong>Floors: </strong>${data.multipleFloors}<br />
+                <strong>Owner: </strong>${data.owner}<br />
+                <strong>Owner Address: </strong>${data.ownerAddress}<br />
+                <strong>Zoning Class: </strong>${data.zoningClass}<br />
+                <hr />
                 <a href="${data.detailsUrl}" target="_blank">Details</a><br />
-                <br /><br /><br />
-<strong>Cost Per Acre: </strong>${data.costPerAcre}<br />
-
-<strong>Cost Per sqft: </strong>${data.costPerSqFt}<br />
-
-<strong>Details link: </strong>${data.detailsUrl}<br />
-
-<strong>Improvement Value: </strong>${data.improvement}<br />
-
-<strong>Market Price: </strong>${data.marketPrice}<br />
-
-<strong>Most Recent Fair Market: </strong>${data.mostRecentFairMarkets}<br/>
-
-<strong>Tax Accessors Value: </strong>${data.mostRecentTaxAccessorsValue}<br />
-
-<strong>Floors?: </strong>${data.multipleFloors}<br />
-
-<strong>Owner: </strong>${data.owner}<br />
-
-<strong>Owner Address: </strong>${data.ownerAddress}<br />
-
-<strong>Parcel ID: </strong>${data.parcelId}<br />
-
-<strong>Photo link: </strong>${data.photo}<br />
-
-<strong>Address: </strong>${data.propertyAddress}<br />
-
-<strong>Land Value: </strong>${data.pullOutLand}<br />
-
-<strong>Acreage: </strong>${data.totalAcreage}<br />
-
-<strong>Total Sqft: </strong>${data.totalSqFt}<br />
-
-<strong>Zoning Class: </strong>${data.zoningClass}<br />
-<strong>Sales Reason: </strong>${data.salesReason}<br />
-<hr />
-
-
-
-
-
-
-
+                <hr />
             </div>
         </div>
     `;
